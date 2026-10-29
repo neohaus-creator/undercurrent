@@ -1,0 +1,11 @@
+name = "seoulmate"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-10-01"
+
+[vars]
+BUDGET_USD = "9"
+PER_IP_DAY = "30"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "6c5a75b0877d4b7598804fdc2ef5f383"

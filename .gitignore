@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+.env
+tools/cf.py
+tools/cf_project.py
+__pycache__/
