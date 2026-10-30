@@ -167,7 +167,7 @@ const TOOL_IMPL = {
     }));
     if (base) scored.sort((a, b) => (b.hidden - a.hidden) || ((b.affinity || 0) - (a.affinity || 0)));
     // What the comparison removed: matches that are already popular with everyone in the area (shown as "not distinctive").
-    const subtracted = base ? scored.filter(r => r.local_rank).map(r => ({ name: r.name, local_rank: r.local_rank, affinity: r.affinity })) : [];
+    const subtracted = base ? scored.filter(r => r.local_rank).map(r => ({ name: r.name, local_rank: r.local_rank, affinity: r.affinity, image: r.image })) : [];
     return { category, baseline_available: !!base, baseline_area: ctx.city || "United States", baseline_size: base ? base.length : 0,
              matched: scored.length, subtracted, results: scored.filter(r => !r.local_rank).slice(0, 8) };
   },
@@ -216,7 +216,7 @@ async function addSpend(env, usd) {
 async function cacheKey(parts) {
   const raw = parts.map(s => s.toLowerCase().replace(/\s+/g, " ").trim()).join("|");
   const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
-  return "resp:" + [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, "0")).join("");
+  return "resp2:" + [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 // ---------- Gemini agent loop ----------
