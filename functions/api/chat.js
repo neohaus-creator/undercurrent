@@ -168,7 +168,7 @@ const TOOL_IMPL = {
 
   async neighbor_partners(env, { seed_ids, city }) {
     const j = await qloo(env, "/v2/insights", {
-      "filter.type": "urn:entity:place", "signal.interests.entities": seed_ids, "filter.geocode.name": city,
+      "filter.type": "urn:entity:place", "signal.interests.entities": seed_ids, "filter.location.query": city,
       "filter.exclude.entities": seed_ids, take: 10,
     });
     if (j.error) return j;

@@ -5,3 +5,4 @@ node_modules/
 tools/cf.py
 tools/cf_project.py
 __pycache__/
+_devpost/
