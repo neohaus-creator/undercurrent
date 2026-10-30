@@ -1,6 +1,6 @@
 # End-to-end tests on the live demo (2026-10-30 16:05 KST)
 
-Each row is one real request to https://seoulmate-dje.pages.dev/api/chat (Qloo Hackathon API + Gemini).
+Each row is one real request to the live API (Qloo Hackathon API + Gemini). These runs used the previous address, https://seoulmate-dje.pages.dev — the same code now also serves https://undercurrent-ai.pages.dev.
 Baseline = the general top 200 for the same category in the request city (US if none). Matches already in it are removed as popular with everyone; the rest are shown as hidden pulls.
 
 | Case | Input | HTTP | Time (s) | Outcome | Qloo/tool calls | Tool errors | Categories with results | Categories | Baseline comparison | Neighbour places | First item per category |
