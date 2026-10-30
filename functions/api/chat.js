@@ -7,6 +7,7 @@ const MODEL = "gemini-3.8-flash";
 const PRICE_IN = 0.75 / 1e6;   // USD per input token
 const PRICE_OUT = 3.75 / 1e6;  // USD per output token
 const MAX_ROUNDS = 10;
+const MIN_CATS = 4;     // categories with measured results required before the playbook
 
 const CATEGORIES = {
   music: "urn:entity:artist",
@@ -193,6 +194,9 @@ async function guard(env, ip) {
   const day = new Date().toISOString().slice(0, 10);
   const spent = Number(await env.KV.get("spend_usd") || 0);
   if (spent >= Number(env.BUDGET_USD || 9)) return "The demo has used up its budget for now. Please try again later.";
+  // Daily cap so one busy day can't eat the days the judges use.
+  const spentToday = Number(await env.KV.get(`spend:${day}`) || 0);
+  if (spentToday >= Number(env.DAILY_BUDGET_USD || 6)) return "The demo has reached today's budget. Please try again tomorrow (UTC), or use one of the examples — those are cached.";
   const k = `ip:${day}:${ip}`;
   const n = Number(await env.KV.get(k) || 0);
   if (n >= Number(env.PER_IP_DAY || 30)) return "Daily limit reached for this visitor. Please come back tomorrow.";
@@ -203,6 +207,16 @@ async function guard(env, ip) {
 async function addSpend(env, usd) {
   const cur = Number(await env.KV.get("spend_usd") || 0);
   await env.KV.put("spend_usd", (cur + usd).toFixed(6));
+  const dk = `spend:${new Date().toISOString().slice(0, 10)}`;
+  const today = Number(await env.KV.get(dk) || 0);
+  await env.KV.put(dk, (today + usd).toFixed(6), { expirationTtl: 259200 });
+}
+
+// Same input within a day -> same answer from KV (no Qloo/Gemini cost; judges clicking the examples are free).
+async function cacheKey(parts) {
+  const raw = parts.map(s => s.toLowerCase().replace(/\s+/g, " ").trim()).join("|");
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  return "resp:" + [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 // ---------- Gemini agent loop ----------
@@ -223,9 +237,6 @@ async function gemini(env, contents) {
 
 export async function onRequestPost({ request, env }) {
   const ip = request.headers.get("cf-connecting-ip") || "unknown";
-  const blocked = await guard(env, ip);
-  if (blocked) return Response.json({ error: blocked }, { status: 429 });
-
   let body;
   try { body = await request.json(); } catch { return Response.json({ error: "bad json" }, { status: 400 }); }
   const business = String(body.business || "").slice(0, 200).trim();
@@ -233,6 +244,13 @@ export async function onRequestPost({ request, env }) {
   const alike = String(body.alike || "").slice(0, 300).trim();
   const note = String(body.note || "").slice(0, 600).trim();
   if (!business) return Response.json({ error: "Tell me the name of your business." }, { status: 400 });
+
+  const ck = await cacheKey([business, city, alike, note]);
+  const cached = await env.KV.get(ck, "json");
+  if (cached) return Response.json({ ...cached, cached: true });
+
+  const blocked = await guard(env, ip);
+  if (blocked) return Response.json({ error: blocked }, { status: 429 });
 
   const ask = `My business: ${business}${city ? `, in ${city}` : ""}.` +
     (alike ? ` Places or brands like mine: ${alike}.` : "") + (note ? ` About us: ${note}` : "");
@@ -242,7 +260,25 @@ export async function onRequestPost({ request, env }) {
   const ctx = { qlooOk: 0, qlooDown: false, nudged: false };
   let usd = 0;
 
-  const done = async (payload, status = 200) => { await addSpend(env, usd); return Response.json({ ...payload, trace, evidence }, { status }); };
+  const done = async (payload, status = 200) => {
+    await addSpend(env, usd);
+    const out = { ...payload, trace, evidence };
+    // Cache only finished playbooks; refusals and errors are retried fresh.
+    if (status === 200 && payload.reply && payload.categories >= MIN_CATS) await env.KV.put(ck, JSON.stringify(out), { expirationTtl: 86400 });
+    return Response.json(out, { status });
+  };
+  // One place that turns a tool result into trace + evidence (used for model calls and server top-ups alike).
+  const record = (name, args, out) => {
+    if (out.error) { if (/qloo (401|403|429|5\d\d)/.test(out.error)) ctx.qlooDown = true; }
+    else ctx.qlooOk++;
+    trace.push({ tool: name, args, count: (out.results || out.keywords || []).length, error: out.error });
+    if (name === "find_entity" && out.results && out.results[0]) evidence.seeds.push(out.results[0]);
+    if (name === "hidden_pull" && args.seed_ids && args.seed_ids.length && !out.error) ctx.seedIds = args.seed_ids;
+    if (name === "hidden_pull" && out.results && out.results.length) evidence.pulls[out.category] = out.results;
+    if (name === "hidden_pull" && out.category) evidence.baseline[out.category] = { available: out.baseline_available, area: out.baseline_area, size: out.baseline_size, matched: out.matched, subtracted: out.subtracted };
+    if (name === "taste_keywords" && out.keywords) evidence.keywords = out.keywords;
+    if (name === "neighbor_partners" && out.results) evidence.partners = out.results;
+  };
 
   try {
     for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -255,12 +291,27 @@ export async function onRequestPost({ request, env }) {
       if (!calls.length) {
         const have = Object.keys(evidence.pulls);
         // Enforce the minimum in code, not only in the prompt: at least four categories before writing.
-        if (have.length && have.length < 4 && !ctx.nudgedCats && round < MAX_ROUNDS - 2) {
-          ctx.nudgedCats = true;
-          const missing = Object.keys(CATEGORIES).filter(c => !have.includes(c)).slice(0, 4 - have.length);
+        // 1st time: ask the model. 2nd time: the server measures the missing categories itself and hands them over.
+        if (have.length && have.length < MIN_CATS && round < MAX_ROUNDS - 1) {
+          const missing = Object.keys(CATEGORIES).filter(c => !have.includes(c));
           contents.push({ role: "model", parts });
-          contents.push({ role: "user", parts: [{ text: `Not enough evidence yet. Run hidden_pull for: ${missing.join(", ")}. Then write the playbook.` }] });
-          continue;
+          if (!ctx.nudgedCats) {
+            ctx.nudgedCats = true;
+            contents.push({ role: "user", parts: [{ text: `Not enough evidence yet. Run hidden_pull for: ${missing.slice(0, MIN_CATS - have.length).join(", ")}. Then write the playbook.` }] });
+            continue;
+          }
+          if (!ctx.serverFilled && ctx.seedIds) {
+            ctx.serverFilled = true;
+            const added = [];
+            for (const category of missing) {
+              if (Object.keys(evidence.pulls).length >= MIN_CATS) break;
+              const out = await TOOL_IMPL.hidden_pull(env, { seed_ids: ctx.seedIds, category }, { city });
+              record("hidden_pull", { seed_ids: ctx.seedIds, category, by: "server" }, out);
+              if (out.results && out.results.length) added.push(out);
+            }
+            contents.push({ role: "user", parts: [{ text: `The server measured these extra categories with the same seeds. Use them too, then write the full playbook:\n${JSON.stringify(added)}` }] });
+            continue;
+          }
         }
         if (!have.length) {
           // No Qloo evidence yet: the model may not answer from its own memory.
@@ -276,7 +327,10 @@ export async function onRequestPost({ request, env }) {
         if (text.startsWith("NO_MATCH")) {
           return done({ error: "Qloo couldn't find your business or anything clearly like it, so I won't guess. Try adding one or two well-known places or brands like yours." }, 422);
         }
-        return done({ reply: text });
+        // Final gate: say plainly when fewer categories than the minimum had data, instead of passing it off as complete.
+        const n = Object.keys(evidence.pulls).length;
+        const note = n < MIN_CATS ? `\n\n_Note: Qloo returned data for only ${n} of the ${MIN_CATS} categories we require, so this playbook is thinner than usual._` : "";
+        return done({ reply: text + note, categories: n });
       }
 
       contents.push({ role: "model", parts });
@@ -285,14 +339,7 @@ export async function onRequestPost({ request, env }) {
         const { name, args = {} } = c.functionCall;
         const impl = TOOL_IMPL[name];
         const out = impl ? await impl(env, args, { city }) : { error: "unknown tool" };
-        if (out.error) { if (/qloo (401|403|429|5\d\d)/.test(out.error)) ctx.qlooDown = true; }
-        else ctx.qlooOk++;
-        trace.push({ tool: name, args, count: (out.results || out.keywords || []).length, error: out.error });
-        if (name === "find_entity" && out.results && out.results[0]) evidence.seeds.push(out.results[0]);
-        if (name === "hidden_pull" && out.results && out.results.length) evidence.pulls[out.category] = out.results;
-        if (name === "hidden_pull" && out.category) evidence.baseline[out.category] = { available: out.baseline_available, area: out.baseline_area, size: out.baseline_size, matched: out.matched, subtracted: out.subtracted };
-        if (name === "taste_keywords" && out.keywords) evidence.keywords = out.keywords;
-        if (name === "neighbor_partners" && out.results) evidence.partners = out.results;
+        record(name, args, out);
         responses.push({ functionResponse: { name, response: out } });
       }
       contents.push({ role: "user", parts: responses });

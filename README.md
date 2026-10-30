@@ -24,7 +24,8 @@ Qloo's affinity score measures similarity between entities and is normalised per
 - At least four categories are measured before the playbook is written — enforced in code, not only in the prompt.
 - Wording: these are tastes Qloo associates with the business and its audience, not a survey of its actual buyers.
 - The playbook may only use names returned by the tools, and cites the numbers next to each claim.
-- Cost guard: per-visitor daily limit and a total spend cap in Cloudflare KV.
+- Cost guard: per-visitor daily limit, a daily and a total spend cap in Cloudflare KV, and a 24-hour answer cache (the same request is served from KV at no cost).
+- Minimum evidence: before the playbook is returned the server checks that at least four categories have measured results; if the model stops short, the server measures the missing categories itself, and if Qloo still has too little data the answer says so.
 
 ## Architecture
 
