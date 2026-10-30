@@ -1,6 +1,6 @@
 # Undercurrent — what your customers love but never tell you
 
-**Live demo:** https://undercurrent-ai.pages.dev
+**Live demo:** https://undercurrent-ai.pages.dev · **Demo video (64 s):** https://youtu.be/qXYRqUmqcw4
 
 Small businesses market on what customers *say*: "the coffee is good", "it looks nice". Everyone says that, so everyone markets the same way. The reasons people actually keep coming back sit outside the business's own category — the films, music, brands and places its customers love more than everyone else does. Customers can't put that into words, a survey won't surface it, and an LLM can only guess.
 
