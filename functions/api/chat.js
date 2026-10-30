@@ -147,7 +147,8 @@ const TOOL_IMPL = {
       baseline(env, type, ctx.city),
     ]);
     if (j.error) return j;
-    const rows = entitiesOf(j).map(slim).filter(Boolean);
+    // popularity 0 = a thin, unverified record in the graph (e.g. a mass-market brand surfacing for a specialty roaster) — skip it
+    const rows = entitiesOf(j).map(slim).filter(r => r && r.popularity !== 0);
     const baseRank = new Map((base || []).map((id, i) => [id, i]));
     const depth = (base || []).length || 100;
     const scored = rows.map((r, i) => {
