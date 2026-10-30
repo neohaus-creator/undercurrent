@@ -4,7 +4,7 @@
 
 Small businesses market on what customers *say*: "the coffee is good", "it looks nice". Everyone says that, so everyone markets the same way. The reasons people actually keep coming back sit outside the business's own category — the films, music, brands and places its customers love more than everyone else does. Customers can't put that into words, a survey won't surface it, and an LLM can only guess.
 
-Undercurrent asks **Qloo's taste graph**. Give it your business name (and optionally a city and one or two look-alikes). An agent finds you in the graph, measures what your customers are drawn to in other categories **after subtracting what the general public likes anyway**, and turns that evidence into this month's marketing: an event, a product or menu idea, a playlist, local collaborations, ad-targeting interests and three ready-to-post captions.
+Undercurrent asks **Qloo's taste graph**. Give it your business name (and optionally a city and one or two look-alikes). An agent finds you in the graph, measures what your customers are drawn to in other categories **after subtracting what the general public of your city likes anyway**, and turns that evidence into this month's marketing: an event, a product or menu idea, a playlist, local collaborations, ad-targeting interests and three ready-to-post captions.
 
 ## What only works because of Qloo
 
@@ -13,10 +13,10 @@ Undercurrent asks **Qloo's taste graph**. Give it your business name (and option
 | Find you | `/search` (`urn:entity:place` / `brand` / …) | your business as an entity |
 | Mood words | `/v2/insights`, `filter.type=urn:tag` (taste analysis) | how your audience's taste is described |
 | **Hidden pulls** | `/v2/insights` per category (artist, movie, tv_show, brand, book, podcast, destination) with `signal.interests.entities` = you, `feature.explainability=true` | what your customers love elsewhere |
-| **Subtract the obvious** | the same category **without** a taste signal (cached daily) | what everyone loves |
-| Neighbours | `/v2/insights`, `urn:entity:place` + `filter.geocode.name` | nearby places with an overlapping audience |
+| **Subtract the obvious** | the same category with only your city as the signal (`signal.location.query`, top 50, cached daily) | what everyone around you loves |
+| Neighbours | `/v2/insights`, `urn:entity:place` + `filter.location.query` | nearby places with an overlapping audience |
 
-Qloo's affinity score measures similarity between entities and is normalised per query, so a top result can simply be something popular with everybody. Undercurrent computes a **lift** for every result: how much higher it ranks for your customers than in the unsignalled baseline. High lift + high affinity = a hidden pull. Low lift = "everyone likes this", and the agent says so instead of selling it as an insight.
+Qloo's affinity score measures similarity between entities and is normalised per query, so a top result can simply be something popular with everybody. Undercurrent computes a **lift** for every result: how much higher it ranks for your customers than for the general public of your city (Qloo needs at least one signal, so the city is the neutral baseline; without a city, the United States). High lift + high affinity = a hidden pull. Low lift = "everyone likes this", and the agent says so instead of selling it as an insight.
 
 ## Guard rails
 
