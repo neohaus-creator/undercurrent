@@ -118,12 +118,14 @@ function slim(e) {
   };
 }
 
-// Baseline = what Qloo ranks for this category with no taste signal. Cached for a day; it is the same for everyone.
-async function baseline(env, type) {
-  const key = `base:${type}`;
+// Baseline = what Qloo ranks for this category for the area in general (no customer signal).
+// Qloo needs at least one signal and caps take at 50, so the area is the neutral signal. Cached for a day per area.
+async function baseline(env, type, area) {
+  const where = area || "United States";
+  const key = `base:${type}:${where.toLowerCase()}`;
   const hit = await env.KV.get(key, "json");
   if (hit) return hit;
-  const j = await qloo(env, "/v2/insights", { "filter.type": type, take: 100 });
+  const j = await qloo(env, "/v2/insights", { "filter.type": type, "signal.location.query": where, take: 50 });
   if (j.error) return null;
   const ids = entitiesOf(j).map(e => e.entity_id || e.id).filter(Boolean);
   await env.KV.put(key, JSON.stringify(ids), { expirationTtl: 86400 });
@@ -137,12 +139,12 @@ const TOOL_IMPL = {
     return { results: entitiesOf(j).map(slim).filter(Boolean) };
   },
 
-  async hidden_pull(env, { seed_ids, category }) {
+  async hidden_pull(env, { seed_ids, category }, ctx = {}) {
     const type = CATEGORIES[category];
     if (!type) return { error: "unknown category" };
     const [j, base] = await Promise.all([
       qloo(env, "/v2/insights", { "filter.type": type, "signal.interests.entities": seed_ids, take: 30, "feature.explainability": "true" }),
-      baseline(env, type),
+      baseline(env, type, ctx.city),
     ]);
     if (j.error) return j;
     const rows = entitiesOf(j).map(slim).filter(Boolean);
@@ -257,7 +259,7 @@ export async function onRequestPost({ request, env }) {
       for (const c of calls) {
         const { name, args = {} } = c.functionCall;
         const impl = TOOL_IMPL[name];
-        const out = impl ? await impl(env, args) : { error: "unknown tool" };
+        const out = impl ? await impl(env, args, { city }) : { error: "unknown tool" };
         if (out.error) { if (/qloo (401|403|429|5\d\d)/.test(out.error)) ctx.qlooDown = true; }
         else ctx.qlooOk++;
         trace.push({ tool: name, args, count: (out.results || out.keywords || []).length, error: out.error });
