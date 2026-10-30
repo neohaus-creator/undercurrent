@@ -212,7 +212,7 @@ async function addSpend(env, usd) {
   await env.KV.put(dk, (today + usd).toFixed(6), { expirationTtl: 259200 });
 }
 
-// Same input within a day -> same answer from KV (no Qloo/Gemini cost; judges clicking the examples are free).
+// Same input within a week -> same answer from KV (no Qloo/Gemini cost; judges clicking the examples are free).
 async function cacheKey(parts) {
   const raw = parts.map(s => s.toLowerCase().replace(/\s+/g, " ").trim()).join("|");
   const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
@@ -264,7 +264,7 @@ export async function onRequestPost({ request, env }) {
     await addSpend(env, usd);
     const out = { ...payload, trace, evidence };
     // Cache only finished playbooks; refusals and errors are retried fresh.
-    if (status === 200 && payload.reply && payload.categories >= MIN_CATS) await env.KV.put(ck, JSON.stringify(out), { expirationTtl: 86400 });
+    if (status === 200 && payload.reply && payload.categories >= MIN_CATS) await env.KV.put(ck, JSON.stringify(out), { expirationTtl: 604800 });
     return Response.json(out, { status });
   };
   // One place that turns a tool result into trace + evidence (used for model calls and server top-ups alike).
