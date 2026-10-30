@@ -16,11 +16,13 @@ Undercurrent asks **Qloo's taste graph**. Give it your business name (and option
 | **Subtract the obvious** | the same category with only your city as the signal (`signal.location.query`, top 50, cached daily) | what everyone around you loves |
 | Neighbours | `/v2/insights`, `urn:entity:place` + `filter.location.query` | nearby places with an overlapping audience |
 
-Qloo's affinity score measures similarity between entities and is normalised per query, so a top result can simply be something popular with everybody. Undercurrent computes a **lift** for every result: how much higher it ranks for your customers than for the general public of your city (Qloo needs at least one signal, so the city is the neutral baseline; without a city, the United States). High lift + high affinity = a hidden pull. Low lift = "everyone likes this", and the agent says so instead of selling it as an insight.
+Qloo's affinity score measures similarity between entities and is normalised per query, so a top result can simply be something popular with everybody. Undercurrent checks every result against the **general top 50 for the same category in your area** (Qloo needs at least one signal, so the city is the neutral baseline; without a city, the United States). An item that is not in that top 50 is marked **hidden** — a pull your audience has that the area at large doesn't; an item that is in it shows its local rank and is treated as "everyone likes this". We report only that comparison — no invented lift score — and if the baseline call fails, nothing is called hidden.
 
 ## Guard rails
 
-- **No Qloo evidence, no answer.** If the business and its look-alikes can't be found, or Qloo is unreachable, the agent says so instead of writing a plausible-sounding plan (`functions/api/chat.js`).
+- **No Qloo evidence, no answer.** If the business and its look-alikes can't be found, Qloo only returns unrelated matches, or Qloo is unreachable, the agent says so instead of writing a plausible-sounding plan (`functions/api/chat.js`).
+- At least four categories are measured before the playbook is written — enforced in code, not only in the prompt.
+- Wording: these are tastes Qloo associates with the business and its audience, not a survey of its actual buyers.
 - The playbook may only use names returned by the tools, and cites the numbers next to each claim.
 - Cost guard: per-visitor daily limit and a total spend cap in Cloudflare KV.
 

@@ -6,7 +6,7 @@ const QLOO = "https://hackathon.api.qloo.com";
 const MODEL = "gemini-3.8-flash";
 const PRICE_IN = 0.75 / 1e6;   // USD per input token
 const PRICE_OUT = 3.75 / 1e6;  // USD per output token
-const MAX_ROUNDS = 8;
+const MAX_ROUNDS = 10;
 
 const CATEGORIES = {
   music: "urn:entity:artist",
@@ -36,7 +36,7 @@ const TOOLS = [{
     {
       name: "hidden_pull",
       description: "Core tool. For the customers of the seed entities, find what they love in another category that the general public does NOT especially love. " +
-        "Returns items with affinity (how strongly they match) and lift (how much higher they rank for these customers than for everyone).",
+        "Returns items with affinity (how strongly they match) and, compared with the area's general top 50 for the same category, whether each item is hidden (absent from it) or popular locally (local_rank).",
       parameters: {
         type: "object",
         properties: {
@@ -79,9 +79,11 @@ Work like an agent:
 4. neighbor_partners if a city is known.
 5. Write the playbook.
 Rules:
+- A seed must plausibly be the business or one of the named look-alikes (same name, or the same kind of business). If find_entity only returns unrelated things (a musical for a kimchi shop, a travel site for a random string), do NOT use them: stop and reply with exactly NO_MATCH.
 - Use ONLY items returned by the tools. Never invent a name, number or partner.
-- Prefer items with high lift: those are the hidden pulls. Items with lift near 0 are things everyone likes — mention them only as "not distinctive".
-- Quote the evidence briefly, e.g. "(affinity 0.82, lift +34)".
+- Each hidden_pull result says whether the item is hidden (not in the area's general top 50 for that category) or popular locally (local_rank). Prefer hidden items: those are the hidden pulls. Items with a local_rank are things everyone nearby likes — mention them only as "not distinctive". If baseline_available is false, say the local comparison was unavailable and do not call anything hidden.
+- Quote the evidence briefly, e.g. "(affinity 0.82, not in Austin's top 50)" or "(affinity 0.80, #12 in Austin overall)".
+- These are tastes Qloo associates with the business and its audience, not a survey of its actual buyers. Word it that way ("people drawn to places like yours"), never as measured facts about the owner's customers.
 Playbook format, in plain text with short headings:
 ## Who your customers are (in one paragraph, from the keywords)
 ## The hidden pulls (5–8 items across categories, each with evidence and one line on why it matters)
@@ -149,15 +151,16 @@ const TOOL_IMPL = {
     if (j.error) return j;
     // popularity 0 = a thin, unverified record in the graph (e.g. a mass-market brand surfacing for a specialty roaster) — skip it
     const rows = entitiesOf(j).map(slim).filter(r => r && r.popularity !== 0);
-    const baseRank = new Map((base || []).map((id, i) => [id, i]));
-    const depth = (base || []).length || 100;
-    const scored = rows.map((r, i) => {
-      // lift: how much higher it ranks for these customers than for everyone (absent from the general top list = full lift)
-      const b = baseRank.has(r.id) ? baseRank.get(r.id) : depth;
-      return { ...r, rank: i + 1, lift: Math.round(((b - i) / depth) * 100) };
-    });
-    scored.sort((a, b) => (b.lift * 0.6 + (b.affinity || 0) * 40) - (a.lift * 0.6 + (a.affinity || 0) * 40));
-    return { category, baseline_available: !!base, results: scored.slice(0, 8) };
+    // Compare with the area's general top 50 for the same category. We report only what we measured:
+    // hidden = not in that top 50; otherwise the item's local rank. No baseline -> no claim at all.
+    const baseRank = new Map((base || []).map((id, i) => [id, i + 1]));
+    const scored = rows.map((r, i) => ({
+      ...r, rank: i + 1,
+      local_rank: base ? (baseRank.get(r.id) || null) : undefined,
+      hidden: base ? !baseRank.has(r.id) : null,
+    }));
+    if (base) scored.sort((a, b) => (b.hidden - a.hidden) || ((b.affinity || 0) - (a.affinity || 0)));
+    return { category, baseline_available: !!base, baseline_area: ctx.city || "United States", baseline_size: base ? base.length : 0, results: scored.slice(0, 8) };
   },
 
   async taste_keywords(env, { seed_ids }) {
@@ -242,7 +245,16 @@ export async function onRequestPost({ request, env }) {
       const calls = parts.filter(p => p.functionCall);
 
       if (!calls.length) {
-        if (!Object.keys(evidence.pulls).length) {
+        const have = Object.keys(evidence.pulls);
+        // Enforce the minimum in code, not only in the prompt: at least four categories before writing.
+        if (have.length && have.length < 4 && !ctx.nudgedCats && round < MAX_ROUNDS - 2) {
+          ctx.nudgedCats = true;
+          const missing = Object.keys(CATEGORIES).filter(c => !have.includes(c)).slice(0, 4 - have.length);
+          contents.push({ role: "model", parts });
+          contents.push({ role: "user", parts: [{ text: `Not enough evidence yet. Run hidden_pull for: ${missing.join(", ")}. Then write the playbook.` }] });
+          continue;
+        }
+        if (!have.length) {
           // No Qloo evidence yet: the model may not answer from its own memory.
           if (!ctx.nudged && round < MAX_ROUNDS - 2) {
             ctx.nudged = true;
@@ -252,7 +264,11 @@ export async function onRequestPost({ request, env }) {
           }
           return done({ error: "I couldn't find this business or anything like it in Qloo's taste graph, so I won't guess. Try adding one or two well-known places or brands like yours." }, 422);
         }
-        return done({ reply: parts.map(p => p.text || "").join("").trim() });
+        const text = parts.map(p => p.text || "").join("").trim();
+        if (text.startsWith("NO_MATCH")) {
+          return done({ error: "Qloo couldn't find your business or anything clearly like it, so I won't guess. Try adding one or two well-known places or brands like yours." }, 422);
+        }
+        return done({ reply: text });
       }
 
       contents.push({ role: "model", parts });
@@ -275,7 +291,10 @@ export async function onRequestPost({ request, env }) {
         return done({ error: "The taste graph is unreachable right now, so I won't guess. Please try again in a minute." }, 503);
       }
     }
-    return done({ reply: "I gathered the evidence but ran out of steps. The findings are listed on the right." });
+    if (!Object.keys(evidence.pulls).length) {
+      return done({ error: "Qloo couldn't match your business well enough to measure anything, so I won't guess. Try adding one or two well-known places or brands like yours." }, 422);
+    }
+    return done({ reply: "I gathered the evidence but ran out of steps before writing the playbook. The measured findings are listed on the right." });
   } catch (e) {
     return done({ error: String(e.message || e) }, 502);
   }
