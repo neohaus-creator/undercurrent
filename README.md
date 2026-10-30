@@ -13,10 +13,10 @@ Undercurrent asks **Qloo's taste graph**. Give it your business name (and option
 | Find you | `/search` (`urn:entity:place` / `brand` / …) | your business as an entity |
 | Mood words | `/v2/insights`, `filter.type=urn:tag` (taste analysis) | how your audience's taste is described |
 | **Hidden pulls** | `/v2/insights` per category (artist, movie, tv_show, brand, book, podcast, destination) with `signal.interests.entities` = you, `feature.explainability=true` | what your customers love elsewhere |
-| **Subtract the obvious** | the same category with only your city as the signal (`signal.location.query`, top 50, cached daily) | what everyone around you loves |
+| **Subtract the obvious** | the same category with only your city as the signal (`signal.location.query`, top 200 over four pages of 50, cached daily) | what everyone around you loves |
 | Neighbours | `/v2/insights`, `urn:entity:place` + `filter.location.query` | nearby places with an overlapping audience |
 
-Qloo's affinity score measures similarity between entities and is normalised per query, so a top result can simply be something popular with everybody. Undercurrent checks every result against the **general top 50 for the same category in your area** (Qloo needs at least one signal, so the city is the neutral baseline; without a city, the United States). An item that is not in that top 50 is marked **hidden** — a pull your audience has that the area at large doesn't; an item that is in it shows its local rank and is treated as "everyone likes this". We report only that comparison — no invented lift score — and if the baseline call fails, nothing is called hidden.
+Qloo's affinity score measures similarity between entities and is normalised per query, so a top result can simply be something popular with everybody. Undercurrent checks every result against the **general top 200 for the same category in your area** (Qloo needs at least one signal, so the city is the neutral baseline; without a city, the United States). An item that is not in that top 200 is marked **hidden** — a pull your audience has that the area at large doesn't; an item that is in it shows its local rank and is treated as "everyone likes this". We report only that comparison — no invented lift score — and if the baseline call fails, nothing is called hidden.
 
 ## Guard rails
 
@@ -43,3 +43,7 @@ Deploy: `npx wrangler@3 pages deploy dist` with `QLOO_API_KEY` and `GEMINI_API_K
 ## License
 
 MIT — see `LICENSE`. Built for the Qloo Agentic Hackathon 2026.
+
+## Tests
+
+Recorded end-to-end runs against the live demo (three industries + two inputs that must be refused): see [`E2E_TESTS.md`](E2E_TESTS.md).

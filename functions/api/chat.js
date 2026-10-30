@@ -36,7 +36,7 @@ const TOOLS = [{
     {
       name: "hidden_pull",
       description: "Core tool. For the customers of the seed entities, find what they love in another category that the general public does NOT especially love. " +
-        "Returns items with affinity (how strongly they match) and, compared with the area's general top 50 for the same category, whether each item is hidden (absent from it) or popular locally (local_rank).",
+        "Returns items with affinity (how strongly they match) and, compared with the area's general top 200 for the same category, whether each item is hidden (absent from it) or popular locally (local_rank).",
       parameters: {
         type: "object",
         properties: {
@@ -81,8 +81,8 @@ Work like an agent:
 Rules:
 - A seed must plausibly be the business or one of the named look-alikes (same name, or the same kind of business). If find_entity only returns unrelated things (a musical for a kimchi shop, a travel site for a random string), do NOT use them: stop and reply with exactly NO_MATCH.
 - Use ONLY items returned by the tools. Never invent a name, number or partner.
-- Each hidden_pull result says whether the item is hidden (not in the area's general top 50 for that category) or popular locally (local_rank). Prefer hidden items: those are the hidden pulls. Items with a local_rank are things everyone nearby likes — mention them only as "not distinctive". If baseline_available is false, say the local comparison was unavailable and do not call anything hidden.
-- Quote the evidence briefly, e.g. "(affinity 0.82, not in Austin's top 50)" or "(affinity 0.80, #12 in Austin overall)".
+- Each hidden_pull result says whether the item is hidden (not in the area's general top 200 for that category) or popular locally (local_rank). Prefer hidden items: those are the hidden pulls. Items with a local_rank are things everyone nearby likes — mention them only as "not distinctive". If baseline_available is false, say the local comparison was unavailable and do not call anything hidden.
+- Quote the evidence briefly, e.g. "(affinity 0.82, not in Austin's top 200)" or "(affinity 0.80, #12 in Austin overall)".
 - These are tastes Qloo associates with the business and its audience, not a survey of its actual buyers. Word it that way ("people drawn to places like yours"), never as measured facts about the owner's customers.
 Playbook format, in plain text with short headings:
 ## Who your customers are (in one paragraph, from the keywords)
@@ -121,15 +121,20 @@ function slim(e) {
 }
 
 // Baseline = what Qloo ranks for this category for the area in general (no customer signal).
-// Qloo needs at least one signal and caps take at 50, so the area is the neutral signal. Cached for a day per area.
+// Qloo needs at least one signal and caps take at 50, so the area is the neutral signal and we read
+// BASE_PAGES pages (top 200). With only the top 50 almost nothing overlapped, so everything looked "hidden".
+// Cached for a day per area. Any failed page -> no baseline -> no "hidden" claim.
+const BASE_PAGES = 4;
 async function baseline(env, type, area) {
   const where = area || "United States";
-  const key = `base:${type}:${where.toLowerCase()}`;
+  const key = `base200:${type}:${where.toLowerCase()}`;
   const hit = await env.KV.get(key, "json");
   if (hit) return hit;
-  const j = await qloo(env, "/v2/insights", { "filter.type": type, "signal.location.query": where, take: 50 });
-  if (j.error) return null;
-  const ids = entitiesOf(j).map(e => e.entity_id || e.id).filter(Boolean);
+  const pages = await Promise.all(Array.from({ length: BASE_PAGES }, (_, i) =>
+    qloo(env, "/v2/insights", { "filter.type": type, "signal.location.query": where, take: 50, page: i + 1 })));
+  if (pages.some(j => j.error)) return null;
+  const ids = pages.flatMap(j => entitiesOf(j).map(e => e.entity_id || e.id)).filter(Boolean);
+  if (!ids.length) return null;
   await env.KV.put(key, JSON.stringify(ids), { expirationTtl: 86400 });
   return ids;
 }
@@ -151,8 +156,8 @@ const TOOL_IMPL = {
     if (j.error) return j;
     // popularity 0 = a thin, unverified record in the graph (e.g. a mass-market brand surfacing for a specialty roaster) — skip it
     const rows = entitiesOf(j).map(slim).filter(r => r && r.popularity !== 0);
-    // Compare with the area's general top 50 for the same category. We report only what we measured:
-    // hidden = not in that top 50; otherwise the item's local rank. No baseline -> no claim at all.
+    // Compare with the area's general top 200 for the same category. We report only what we measured:
+    // hidden = not in that top 200; otherwise the item's local rank. No baseline -> no claim at all.
     const baseRank = new Map((base || []).map((id, i) => [id, i + 1]));
     const scored = rows.map((r, i) => ({
       ...r, rank: i + 1,
@@ -160,7 +165,10 @@ const TOOL_IMPL = {
       hidden: base ? !baseRank.has(r.id) : null,
     }));
     if (base) scored.sort((a, b) => (b.hidden - a.hidden) || ((b.affinity || 0) - (a.affinity || 0)));
-    return { category, baseline_available: !!base, baseline_area: ctx.city || "United States", baseline_size: base ? base.length : 0, results: scored.slice(0, 8) };
+    // What the comparison removed: matches that are already popular with everyone in the area (shown as "not distinctive").
+    const subtracted = base ? scored.filter(r => r.local_rank).map(r => ({ name: r.name, local_rank: r.local_rank, affinity: r.affinity })) : [];
+    return { category, baseline_available: !!base, baseline_area: ctx.city || "United States", baseline_size: base ? base.length : 0,
+             matched: scored.length, subtracted, results: scored.filter(r => !r.local_rank).slice(0, 8) };
   },
 
   async taste_keywords(env, { seed_ids }) {
@@ -230,7 +238,7 @@ export async function onRequestPost({ request, env }) {
     (alike ? ` Places or brands like mine: ${alike}.` : "") + (note ? ` About us: ${note}` : "");
   const contents = [{ role: "user", parts: [{ text: ask }] }];
   const trace = [];
-  const evidence = { keywords: [], pulls: {}, partners: [], seeds: [] };
+  const evidence = { keywords: [], pulls: {}, partners: [], seeds: [], baseline: {} };
   const ctx = { qlooOk: 0, qlooDown: false, nudged: false };
   let usd = 0;
 
@@ -281,7 +289,8 @@ export async function onRequestPost({ request, env }) {
         else ctx.qlooOk++;
         trace.push({ tool: name, args, count: (out.results || out.keywords || []).length, error: out.error });
         if (name === "find_entity" && out.results && out.results[0]) evidence.seeds.push(out.results[0]);
-        if (name === "hidden_pull" && out.results) evidence.pulls[out.category] = out.results;
+        if (name === "hidden_pull" && out.results && out.results.length) evidence.pulls[out.category] = out.results;
+        if (name === "hidden_pull" && out.category) evidence.baseline[out.category] = { available: out.baseline_available, area: out.baseline_area, size: out.baseline_size, matched: out.matched, subtracted: out.subtracted };
         if (name === "taste_keywords" && out.keywords) evidence.keywords = out.keywords;
         if (name === "neighbor_partners" && out.results) evidence.partners = out.results;
         responses.push({ functionResponse: { name, response: out } });

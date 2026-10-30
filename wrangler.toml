@@ -3,7 +3,7 @@ pages_build_output_dir = "dist"
 compatibility_date = "2026-10-01"
 
 [vars]
-BUDGET_USD = "9"
+BUDGET_USD = "30"
 PER_IP_DAY = "30"
 
 [[kv_namespaces]]
