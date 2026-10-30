@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Undercurrent — what your customers love that the rest of your city doesn't</title>
+<title>Undercurrent — what your audience is drawn to that the rest of your city isn't</title>
 <meta name="description" content="Taste intelligence for small businesses. Qloo's taste graph finds what your audience loves outside your category, subtracts what everyone in your city already likes, and an agent turns the rest into this month's marketing.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,800;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap">
@@ -146,8 +146,8 @@ footer{border-top:1px solid var(--ink);padding:16px 0 40px;font:400 12px "IBM Pl
   <section class="hero">
     <div>
       <p class="kicker">Hidden pulls, measured</p>
-      <h1>What your customers love — <em>that the rest of your city doesn't.</em></h1>
-      <p class="dek">Qloo's taste graph knows what your audience reads, watches and listens to. Undercurrent <b>subtracts what everyone in your city already likes</b>, keeps what is left, and an agent turns it into this month's marketing — every name backed by a number.</p>
+      <h1>What your audience is drawn to — <em>that the rest of your city isn't.</em></h1>
+      <p class="dek">Qloo's taste graph knows what people drawn to places like yours read, watch and listen to. Undercurrent <b>subtracts what everyone in your city already likes</b>, keeps what is left, and an agent turns it into this month's marketing — every name backed by a number.</p>
     </div>
     <form class="slip" id="f">
       <h2>Run a report</h2>
@@ -250,8 +250,11 @@ function showReport(payload, j) {
   $("#rmeta").textContent = `${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · ${calls} tool calls${j.cached ? " · saved report" : ""}`;
   const removed = Object.values(ev.baseline || {}).reduce((n, b) => n + ((b.subtracted || []).length), 0);
   const kept = Object.values(ev.pulls || {}).reduce((n, r) => n + r.length, 0);
+  const where = payload.city ? "the whole city" : "the United States overall";
   $("#lede").innerHTML = j.error ? `<span class="status">${esc(j.error)}</span>` :
-    `Matched in Qloo as <b>${esc(seed ? seed.name : payload.business)}</b>. Of everything its audience is drawn to, we crossed out <b>${removed}</b> things the whole city already likes and kept <b>${kept}</b> hidden pulls across ${Object.keys(ev.pulls || {}).length} categories.`;
+    (j.status === "partial" ? `<b>Partial analysis — not a full report.</b> ${esc(j.partial_reason || "")} ` : "") +
+    `Matched in Qloo as <b>${esc(seed ? seed.name : payload.business)}</b>. Of everything Qloo associates with its audience, we crossed out <b>${removed}</b> things ${where} already likes and kept <b>${kept}</b> hidden pulls across ${Object.keys(ev.pulls || {}).length} categories.` +
+    (payload.city ? "" : " <em>No city given, so the comparison is against the United States as a whole — add a city for a local read.</em>");
   $("#ledger").innerHTML = j.error ? "" : ledger(ev);
   $("#reply").innerHTML = j.error ? "" : render(j.reply || "");
   $("#kw").innerHTML = (ev.keywords || []).slice(0, 10).map(k => `<span>${esc(k.name)}</span>`).join("") || '<span class="status">—</span>';

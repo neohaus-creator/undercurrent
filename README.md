@@ -25,7 +25,8 @@ Qloo's affinity score measures similarity between entities and is normalised per
 - Wording: these are tastes Qloo associates with the business and its audience, not a survey of its actual buyers.
 - The playbook may only use names returned by the tools, and cites the numbers next to each claim.
 - Cost guard: per-visitor daily limit, a daily and a total spend cap in Cloudflare KV, and a 7-day answer cache (the same request is served from KV at no cost).
-- Minimum evidence: before the playbook is returned the server checks that at least four categories have measured results; if the model stops short, the server measures the missing categories itself, and if Qloo still has too little data the answer says so.
+- Minimum evidence: before the playbook is returned the server checks that at least four categories have measured results; if the model stops short, the server measures the missing categories itself. If Qloo still has too little data, the response is marked `status: "partial"` (shown as "Partial analysis — not a full report") and is never cached; full reports carry `status: "complete"`.
+- Without a city, the baseline is the United States as a whole, and the page says so.
 
 ## Architecture
 

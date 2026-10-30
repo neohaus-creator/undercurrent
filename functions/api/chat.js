@@ -193,7 +193,7 @@ const TOOL_IMPL = {
 async function guard(env, ip) {
   const day = new Date().toISOString().slice(0, 10);
   const spent = Number(await env.KV.get("spend_usd") || 0);
-  if (spent >= Number(env.BUDGET_USD || 9)) return "The demo has used up its budget for now. Please try again later.";
+  if (spent >= Number(env.BUDGET_USD || 30)) return "The demo has used up its budget for now. Please try again later.";
   // Daily cap so one busy day can't eat the days the judges use.
   const spentToday = Number(await env.KV.get(`spend:${day}`) || 0);
   if (spentToday >= Number(env.DAILY_BUDGET_USD || 6)) return "The demo has reached today's budget. Please try again tomorrow (UTC), or use one of the examples — those are cached.";
@@ -264,7 +264,7 @@ export async function onRequestPost({ request, env }) {
     await addSpend(env, usd);
     const out = { ...payload, trace, evidence };
     // Cache only finished playbooks; refusals and errors are retried fresh.
-    if (status === 200 && payload.reply && payload.categories >= MIN_CATS) await env.KV.put(ck, JSON.stringify(out), { expirationTtl: 604800 });
+    if (status === 200 && payload.status === "complete") await env.KV.put(ck, JSON.stringify(out), { expirationTtl: 604800 });
     return Response.json(out, { status });
   };
   // One place that turns a tool result into trace + evidence (used for model calls and server top-ups alike).
@@ -327,10 +327,13 @@ export async function onRequestPost({ request, env }) {
         if (text.startsWith("NO_MATCH")) {
           return done({ error: "Qloo couldn't find your business or anything clearly like it, so I won't guess. Try adding one or two well-known places or brands like yours." }, 422);
         }
-        // Final gate: say plainly when fewer categories than the minimum had data, instead of passing it off as complete.
+        // Final gate: fewer than MIN_CATS = a partial analysis, never passed off as a finished playbook (and never cached).
         const n = Object.keys(evidence.pulls).length;
-        const note = n < MIN_CATS ? `\n\n_Note: Qloo returned data for only ${n} of the ${MIN_CATS} categories we require, so this playbook is thinner than usual._` : "";
-        return done({ reply: text + note, categories: n });
+        if (n < MIN_CATS) {
+          return done({ reply: text, categories: n, status: "partial",
+            partial_reason: `Qloo returned data for only ${n} of the ${MIN_CATS} categories required for a full report.` });
+        }
+        return done({ reply: text, categories: n, status: "complete" });
       }
 
       contents.push({ role: "model", parts });
@@ -350,7 +353,8 @@ export async function onRequestPost({ request, env }) {
     if (!Object.keys(evidence.pulls).length) {
       return done({ error: "Qloo couldn't match your business well enough to measure anything, so I won't guess. Try adding one or two well-known places or brands like yours." }, 422);
     }
-    return done({ reply: "I gathered the evidence but ran out of steps before writing the playbook. The measured findings are listed on the right." });
+    return done({ reply: "I gathered the evidence but ran out of steps before writing the playbook. The measured findings are shown above.",
+      categories: Object.keys(evidence.pulls).length, status: "partial", partial_reason: "The agent ran out of steps before writing the playbook." });
   } catch (e) {
     return done({ error: String(e.message || e) }, 502);
   }
